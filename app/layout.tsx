@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -27,7 +28,33 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full bg-[#f7f2eb] text-slate-900">
+        <header className="border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+            <Link href="/" className="text-lg font-semibold text-slate-900">
+              By Gadiza
+            </Link>
+            <nav className="flex items-center gap-4 text-sm font-medium text-slate-700">
+              <Link href="/" className="transition hover:text-slate-900">
+                Beranda
+              </Link>
+              <Link href="/cart" className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2 text-white transition hover:bg-rose-700">
+                <span>🛒</span>
+                Keranjang Belanja
+              </Link>
+            </nav>
+          </div>
+        </header>
+        <main className="flex-1">{children}</main>
+        <footer className="border-t border-slate-200/80 bg-white/90 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+            <p className="text-xs text-slate-500">© 2026 By Gadiza. All rights reserved.</p>
+            <Link href="/admin/orders" className="text-xs font-medium text-slate-400 transition hover:text-slate-700">
+              Admin Area
+            </Link>
+          </div>
+        </footer>
+      </body>
     </html>
   );
 }
