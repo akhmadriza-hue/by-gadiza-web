@@ -1,47 +1,54 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { PRODUCT_TABLE } from "@/lib/productTable";
 import ProductGrid from "./components/ProductGrid";
 
-function formatRupiah(value: unknown) {
-  const raw = value ?? 0;
-  const num = typeof raw === "string" ? Number(raw.replace(/[.,\s]/g, "")) : Number(raw);
-  if (!Number.isFinite(num) || isNaN(num)) return "Rp 0";
+export default function Home() {
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(Math.round(num));
-}
+  useEffect(() => {
+    let isMounted = true;
 
-export default async function Home() {
-  let items = [];
-  let fetchError = null;
+    async function loadProducts() {
+      setLoading(true);
+      setFetchError(null);
 
-  try {
-    let res: any = await supabase.from("produk").select("*").order("id", { ascending: true });
-    if (res?.error) {
-      console.warn("Ordering by 'id' failed, fetching produk without ORDER BY.", res.error);
-      res = await supabase.from("produk").select("*");
+      try {
+        const { data, error } = await supabase.from(PRODUCT_TABLE).select("*").order("id", { ascending: true });
+        if (error) {
+          console.error("Supabase error fetching produk:", error);
+          if (isMounted) {
+            setFetchError(error.message || JSON.stringify(error));
+            setItems([]);
+          }
+        } else {
+          if (isMounted) {
+            setItems(Array.isArray(data) ? data : []);
+          }
+        }
+      } catch (err) {
+        console.error("Unexpected error fetching produk:", err);
+        if (isMounted) {
+          setFetchError(err instanceof Error ? err.message : String(err));
+          setItems([]);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     }
 
-    const { data, error } = res || {};
+    loadProducts();
 
-    if (error) {
-      // Log detailed Supabase error to server console for debugging
-      console.error("Supabase error fetching 'produk':", error);
-      fetchError = error;
-    } else if (Array.isArray(data)) {
-      items = data;
-    } else {
-      // Unexpected shape
-      console.error("Unexpected data shape from Supabase (produk):", data);
-      items = [];
-    }
-  } catch (err) {
-    // Network/serialization or unexpected errors
-    console.error("Unexpected error fetching 'produk':", err);
-    fetchError = err;
-  }
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#f7f2eb] text-slate-900">
@@ -52,7 +59,7 @@ export default async function Home() {
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <span className="inline-flex rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold tracking-wide text-rose-700">By Gadiza</span>
               <a
-                href="/admin"
+                href="/admin/products"
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition duration-300 hover:border-slate-300 hover:bg-slate-50"
               >
                 Admin Produk
@@ -65,11 +72,18 @@ export default async function Home() {
           </div>
         </section>
 
-        {fetchError ? (
+        {loading ? (
+          <div className="flex min-h-[40vh] items-center justify-center rounded-3xl bg-white p-8 text-center text-slate-700 shadow-sm">
+            <div>
+              <p className="text-lg font-semibold">Memuat produk...</p>
+              <p className="mt-2 text-sm text-slate-500">Menarik produk terbaru langsung dari database Supabase.</p>
+            </div>
+          </div>
+        ) : fetchError ? (
           <div className="flex min-h-[40vh] items-center justify-center rounded-3xl bg-rose-50 p-8 text-center text-slate-700 shadow-sm">
             <div>
               <p className="text-lg font-semibold">Terjadi kesalahan saat memuat produk.</p>
-              <p className="mt-2 text-sm">Silakan cek log server (console.error) untuk detail: {String((fetchError as { message?: string })?.message ?? fetchError)}</p>
+              <p className="mt-2 text-sm">{fetchError}</p>
             </div>
           </div>
         ) : items.length === 0 ? (

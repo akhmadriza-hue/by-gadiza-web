@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { PRODUCT_TABLE } from "@/lib/productTable";
 
 export default function AdminPage() {
   const [isSaving, setIsSaving] = useState(false);
@@ -56,7 +57,7 @@ export default function AdminPage() {
       if (!publicUrl) {
         throw new Error("Gagal membuat public URL untuk gambar.");
       }
-      const insertRes = await supabase.from("produk").insert({
+      const insertRes = await supabase.from(PRODUCT_TABLE).insert({
         nama_produk: nama,
         deskripsi: deskripsi,
         harga: harga,

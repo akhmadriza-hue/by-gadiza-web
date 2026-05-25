@@ -10,10 +10,15 @@ function formatRupiah(value: number) {
 
 function normalizeProduct(product: any) {
   return {
-    id: product?.id ?? product?.id_pesanan ?? product?.kode_order ?? String(product?.name ?? product?.nama ?? ""),
-    nama: product?.nama ?? product?.nama_produk ?? product?.name ?? product?.title ?? "Produk",
+    id: product?.id ?? product?.id_pesanan ?? product?.kode_order ?? String(product?.name ?? product?.nama ?? product?.nama_produk ?? ""),
+    nama: product?.name ?? product?.nama ?? product?.nama_produk ?? product?.title ?? "Produk",
     deskripsi: product?.deskripsi ?? product?.description ?? "Deskripsi singkat produk belum tersedia.",
-    foto_url: typeof product?.foto_url === "string" ? product.foto_url : product?.fotoUrl ?? "",
+    foto_url:
+      typeof product?.foto_url === "string"
+        ? product.foto_url
+        : typeof product?.image_url === "string"
+        ? product.image_url
+        : product?.fotoUrl ?? "",
     harga: Number(product?.harga ?? product?.price ?? 0),
     kategori: product?.kategori ?? "",
   };

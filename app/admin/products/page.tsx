@@ -3,188 +3,177 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-const ADMIN_PASSWORD = "adminGadiza2026";
-
-const initialFormState = {
-  nama: "",
-  harga: "",
-  stok: "",
-  deskripsi: "",
-  foto_url: "",
-};
+import { PRODUCT_TABLE, getProductName, getProductImage } from "@/lib/productTable";
 
 export default function AdminProductsPage() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
-  const [nameColumn, setNameColumn] = useState<"name" | "nama" | "nama_produk">("name");
-  const [imageColumn, setImageColumn] = useState<"image_url" | "foto_url">("image_url");
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState(initialFormState);
+  const [form, setForm] = useState<any>({ nama: "", harga: "", stok: "", deskripsi: "", foto_file: null, foto_url: "" });
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>("id");
+  const [editingKeyValue, setEditingKeyValue] = useState<any>(null);
   const [saving, setSaving] = useState(false);
-  const [deletingIds, setDeletingIds] = useState<Record<number, boolean>>({});
+  const [deletingIds, setDeletingIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    const storedSession = typeof window !== "undefined" ? localStorage.getItem("admin_session") : null;
-
-    if (storedSession === ADMIN_PASSWORD) {
+    const ADMIN_PASSWORD = "adminGadiza2026";
+    const stored = typeof window !== "undefined" ? localStorage.getItem("admin_session") : null;
+    if (stored === ADMIN_PASSWORD) {
       setIsAuthenticated(true);
-      return;
+    } else {
+      const pw = prompt("Masukkan Password Admin:");
+      if (pw === ADMIN_PASSWORD) {
+        localStorage.setItem("admin_session", ADMIN_PASSWORD);
+        setIsAuthenticated(true);
+      } else {
+        alert("Akses Ditolak!");
+        router.push("/");
+      }
     }
-
-    const password = prompt("Masukkan Password Admin:");
-    if (password === ADMIN_PASSWORD) {
-      localStorage.setItem("admin_session", ADMIN_PASSWORD);
-      setIsAuthenticated(true);
-      return;
-    }
-
-    alert("Akses Ditolak!");
-    router.push("/");
   }, [router]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
-
     let mounted = true;
-
-    async function loadProducts() {
+    async function load() {
       setLoading(true);
-      const { data, error } = await supabase.from("produk").select("*").order("id", { ascending: false });
-      if (error) {
-        console.error("Supabase fetch produk error:", error);
-      } else if (mounted) {
-        setProducts(data ?? []);
-        if (Array.isArray(data) && data.length > 0) {
-          const firstRow = data[0];
-          const activeImageKey = firstRow.image_url !== undefined ? "image_url" : firstRow.foto_url !== undefined ? "foto_url" : "image_url";
-          const activeNameKey = firstRow.name !== undefined ? "name" : firstRow.nama !== undefined ? "nama" : firstRow.nama_produk !== undefined ? "nama_produk" : "name";
-          setImageColumn(activeImageKey);
-          setNameColumn(activeNameKey);
-        }
-      }
+      const { data, error } = await supabase.from(PRODUCT_TABLE).select("*").order("id", { ascending: false });
+      console.log("Daftar isi object data yang diterima:", data);
+      if (error) console.error("Supabase fetch produk error:", error);
+      if (mounted) setProducts(data ?? []);
       setLoading(false);
     }
-
-    loadProducts();
-    return () => {
-      mounted = false;
-    };
+    load();
+    return () => { mounted = false; };
   }, [isAuthenticated]);
 
-  function formatRupiah(value: number) {
-    return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR" }).format(value);
-  }
-
-  function openNewProduct() {
-    setForm(initialFormState);
+  function openNew() {
+    setForm({ nama: "", harga: "", stok: "", deskripsi: "", foto_file: null, foto_url: "" });
     setEditingId(null);
     setModalOpen(true);
   }
 
-  function getProductName(product: any) {
-    return product.name ?? product.nama ?? product.nama_produk ?? "";
-  }
-
-  function openEditProduct(product: any) {
-    const productImage = product.image_url ?? product.foto_url ?? "";
+  function openEdit(product: any) {
+    // detect primary key name and value from product object
+    const pkCandidates = ["id", "id_produk", "id_product", "product_id", "id_pesanan", "id_p"];
+    let detectedKey: string | null = null;
+    for (const k of pkCandidates) {
+      if (product[k] !== undefined && product[k] !== null) {
+        detectedKey = k;
+        break;
+      }
+    }
+    if (!detectedKey && product.id !== undefined) detectedKey = "id";
+    setEditingKey(detectedKey);
+    setEditingKeyValue(detectedKey ? product[detectedKey] : product.id ?? null);
+    setEditingId(product.id ?? null);
     setForm({
       nama: getProductName(product),
       harga: String(product.harga ?? ""),
       stok: String(product.stok ?? ""),
       deskripsi: product.deskripsi ?? "",
-      foto_url: productImage,
+      foto_file: null,
+      foto_url: getProductImage(product),
     });
-    setEditingId(product.id);
-    if (product.image_url !== undefined) {
-      setImageColumn("image_url");
-    } else if (product.foto_url !== undefined) {
-      setImageColumn("foto_url");
-    }
-    if (product.name !== undefined) {
-      setNameColumn("name");
-    } else if (product.nama !== undefined) {
-      setNameColumn("nama");
-    } else if (product.nama_produk !== undefined) {
-      setNameColumn("nama_produk");
-    }
     setModalOpen(true);
   }
 
-  async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!form.nama.trim()) {
-      alert("Nama produk wajib diisi.");
-      return;
-    }
+  async function uploadFile(file: File) {
+    const fileName = `produk-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "-")}`;
+    const filePath = `foto-produk/${fileName}`;
+    const uploadRes = await supabase.storage.from("foto-produk").upload(filePath, file, { cacheControl: "3600", upsert: false });
+    if (uploadRes.error) throw uploadRes.error;
+    const publicUrlRes = await supabase.storage.from("foto-produk").getPublicUrl(filePath);
+    return publicUrlRes.data?.publicUrl ?? "";
+  }
 
-    const imageUrlValue = form.foto_url.trim();
-    const payload: any = {
-      [nameColumn]: form.nama.trim(),
-      harga: Number(form.harga) || 0,
-      stok: Number(form.stok) || 0,
-      deskripsi: form.deskripsi.trim(),
-      [imageColumn]: imageUrlValue,
-    };
-
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.nama || String(form.nama).trim() === "") { alert("Nama wajib diisi"); return; }
     setSaving(true);
-    console.log("Supabase save produk payload:", payload);
     try {
+      let imageUrl = form.foto_url || "";
+      if (form.foto_file instanceof File) {
+        imageUrl = await uploadFile(form.foto_file);
+      }
+      const payload: any = {
+        nama_produk: form.nama.trim(),
+        harga: Number(form.harga) || 0,
+        stok: Number(form.stok) || 0,
+        deskripsi: form.deskripsi?.trim() || "",
+        foto_url: imageUrl,
+      };
+
       if (editingId) {
-        const { error } = await supabase.from("produk").update(payload).eq("id", editingId);
-        if (error) {
-          throw error;
-        }
-        setProducts((prev) => prev.map((item) => (item.id === editingId ? { ...item, ...payload } : item)));
+        // use detected primary key if available
+        const pk = editingKey || "id";
+        const pkVal = editingKeyValue ?? editingId;
+        const { error } = await supabase.from(PRODUCT_TABLE).update(payload).eq(pk, pkVal);
+        if (error) throw error;
+        setProducts((prev) => prev.map((p) => ( (p[pk] === pkVal) ? { ...p, ...payload } : p)));
         alert("Produk berhasil diperbarui.");
       } else {
-        const { data, error } = await supabase.from("produk").insert(payload).select().single();
-        if (error) {
-          throw error;
-        }
+        const { data, error } = await supabase.from(PRODUCT_TABLE).insert(payload).select().single();
+        if (error) throw error;
         setProducts((prev) => [data ?? payload, ...prev]);
         alert("Produk baru berhasil ditambahkan.");
       }
+
       setModalOpen(false);
-    } catch (err) {
-      const errorDetails = err && typeof err === "object" ? JSON.stringify(err, Object.getOwnPropertyNames(err), 2) : String(err);
+      router.refresh();
+    } catch (err: any) {
       console.error("Supabase save produk error:", err);
-      alert(`Gagal menyimpan data produk. Silakan coba lagi.\n\nDetail error:\n${errorDetails}`);
-    } finally {
-      setSaving(false);
-    }
+      alert(`Gagal menyimpan produk: ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}`);
+    } finally { setSaving(false); }
   }
 
-  async function deleteProduct(id: number) {
-    const confirmed = confirm("Yakin ingin menghapus produk ini dari database?");
-    if (!confirmed) return;
+  async function handleDelete(productOrId: any) {
+    // accept either a product object or an id
+    const product = typeof productOrId === "object" ? productOrId : null;
+    const id = product ? null : productOrId;
+    const pkCandidates = ["id", "id_produk", "id_product", "product_id", "id_pesanan", "id_p"];
+    let pk: string | null = null;
+    let pkVal: any = null;
 
-    setDeletingIds((prev) => ({ ...prev, [id]: true }));
-    try {
-      const { error } = await supabase.from("produk").delete().eq("id", id);
-      if (error) {
-        throw error;
+    if (product) {
+      for (const k of pkCandidates) {
+        if (product[k] !== undefined && product[k] !== null) {
+          pk = k; pkVal = product[k]; break;
+        }
       }
-      setProducts((prev) => prev.filter((item) => item.id !== id));
-      alert("Produk berhasil dihapus.");
-    } catch (error) {
-      console.error("Supabase delete produk error:", error);
-      alert("Gagal menghapus produk. Silakan coba lagi.");
+      if (!pk) { pk = "id"; pkVal = product.id ?? null; }
+    } else {
+      pk = "id"; pkVal = id;
+    }
+
+    const ok = confirm("Yakin ingin menghapus produk ini?");
+    if (!ok) return;
+
+    setDeletingIds((s) => ({ ...s, [String(pkVal)]: true }));
+    try {
+      // use select() to confirm deletion
+      const { data, error } = await supabase.from(PRODUCT_TABLE).delete().eq(pk, pkVal).select();
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        // nothing deleted
+        throw new Error(`No rows deleted for ${pk}=${pkVal}`);
+      }
+      // remove from UI
+      setProducts((prev) => prev.filter((p) => p[pk] !== pkVal));
+      alert("Produk dihapus.");
+      router.refresh();
+    } catch (err: any) {
+      console.error("Supabase delete produk error:", err);
+      alert(`Gagal menghapus produk: ${JSON.stringify(err, Object.getOwnPropertyNames(err), 2)}`);
     } finally {
-      setDeletingIds((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      setDeletingIds((s) => { const c = { ...s }; delete c[String(pkVal)]; return c; });
     }
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-12">
@@ -193,160 +182,84 @@ export default function AdminProductsPage() {
           <h1 className="text-3xl font-semibold">Dashboard Admin Produk</h1>
           <p className="mt-2 text-sm text-slate-600">Kelola daftar produk, stok, dan informasi produk secara real-time.</p>
         </div>
-        <button
-          type="button"
-          onClick={openNewProduct}
-          className="inline-flex items-center justify-center rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-700"
-        >
-          + Tambah Produk Baru
-        </button>
+        <button onClick={openNew} className="inline-flex items-center rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white">+ Tambah Produk Baru</button>
       </div>
 
-      {loading ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-8 text-slate-700">Memuat daftar produk...</div>
-      ) : products.length === 0 ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-8 text-slate-700">Belum ada produk di database.</div>
-      ) : (
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full border-collapse text-left text-sm">
+      {loading ? <div className="rounded-3xl border p-8">Memuat daftar produk...</div> : (
+        <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+          <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-4 py-3 font-medium text-slate-600">Nama</th>
-                <th className="px-4 py-3 font-medium text-slate-600">Harga</th>
-                <th className="px-4 py-3 font-medium text-slate-600">Stok</th>
-                <th className="px-4 py-3 font-medium text-slate-600">Deskripsi</th>
-                <th className="px-4 py-3 font-medium text-slate-600">Foto</th>
-                <th className="px-4 py-3 font-medium text-slate-600">Aksi</th>
+                <th className="px-4 py-3">Nama</th>
+                <th className="px-4 py-3">Harga</th>
+                <th className="px-4 py-3">Stok</th>
+                <th className="px-4 py-3">Deskripsi</th>
+                <th className="px-4 py-3">Foto</th>
+                <th className="px-4 py-3">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {products.map((product) => (
-                <tr key={product.id} className="border-t border-slate-200 hover:bg-slate-50">
-                  <td className="px-4 py-4 align-top text-slate-900">{getProductName(product)}</td>
-                  <td className="px-4 py-4 align-top text-slate-700">{formatRupiah(Number(product.harga) || 0)}</td>
-                  <td className="px-4 py-4 align-top text-slate-700">{product.stok ?? 0}</td>
-                  <td className="px-4 py-4 align-top text-slate-700 max-w-xl break-words">{product.deskripsi || "-"}</td>
-                  <td className="px-4 py-4 align-top text-slate-700">
-                    {product.image_url ?? product.foto_url ? (
-                      <img src={product.image_url ?? product.foto_url} alt={product.nama} className="h-16 w-16 rounded-xl object-cover" />
-                    ) : (
-                      <span className="text-xs text-slate-400">Tidak ada</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-4 align-top text-slate-700">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEditProduct(product)}
-                        className="rounded-full border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!!deletingIds[product.id]}
-                        onClick={() => deleteProduct(product.id)}
-                        className="rounded-full border border-red-500 bg-red-50 px-3 py-2 text-sm text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {deletingIds[product.id] ? "Menghapus..." : "Hapus"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {products.map((p) => {
+                const productKey = p.id ?? p.id_produk ?? p.id_product ?? p.product_id ?? p.id_pesanan ?? p.id_p ?? p.id;
+                const deleting = !!deletingIds[String(productKey)];
+                return (
+                  <tr key={String(productKey)} className="border-t hover:bg-slate-50">
+                    <td className="px-4 py-3 align-top">{getProductName(p)}</td>
+                    <td className="px-4 py-3">Rp {Number(p.harga || 0).toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-3">{p.stok ?? 0}</td>
+                    <td className="px-4 py-3 max-w-xl break-words">{p.deskripsi ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      {getProductImage(p) ? <img src={getProductImage(p)} alt={getProductName(p)} className="h-16 w-16 rounded-xl object-cover" /> : <span className="text-xs text-slate-400">Tidak ada</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <button onClick={() => openEdit(p)} className="rounded-full border px-3 py-2 text-sm">Edit</button>
+                        <button onClick={() => handleDelete(p)} disabled={deleting} className="rounded-full border border-red-500 bg-red-50 px-3 py-2 text-sm text-red-700">{deleting ? "..." : "Hapus"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
       {modalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-8">
-          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-semibold">{editingId ? "Edit Produk" : "Tambah Produk Baru"}</h2>
-                <p className="mt-1 text-sm text-slate-500">Lengkapi detail produk, lalu simpan untuk memperbarui database.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="rounded-full border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-              >
-                Tutup
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-6">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">{editingId ? "Edit Produk" : "Tambah Produk Baru"}</h2>
+              <button onClick={() => setModalOpen(false)} className="px-3 py-2 rounded-full border">Tutup</button>
             </div>
-            <form className="grid gap-4" onSubmit={saveProduct}>
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">Nama Produk</span>
-                <input
-                  type="text"
-                  value={form.nama}
-                  onChange={(event) => setForm((prev) => ({ ...prev, nama: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-                  placeholder="Contoh: Tas Rajut"
-                  required
-                />
+            <form onSubmit={handleSave} className="grid gap-4">
+              <label>
+                <span className="text-sm font-medium">Nama Produk</span>
+                <input value={form.nama} onChange={(e) => setForm((s:any)=>({...s, nama: e.target.value}))} className="mt-2 w-full rounded-xl border px-4 py-3" required />
               </label>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="mb-2 block text-sm font-medium text-slate-700">Harga (IDR)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.harga}
-                    onChange={(event) => setForm((prev) => ({ ...prev, harga: event.target.value }))}
-                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-                    placeholder="100000"
-                    required
-                  />
+              <div className="grid sm:grid-cols-2 gap-4">
+                <label>
+                  <span className="text-sm font-medium">Harga</span>
+                  <input type="number" value={form.harga} onChange={(e) => setForm((s:any)=>({...s, harga: e.target.value}))} className="mt-2 w-full rounded-xl border px-4 py-3" />
                 </label>
-                <label className="block">
-                  <span className="mb-2 block text-sm font-medium text-slate-700">Stok</span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.stok}
-                    onChange={(event) => setForm((prev) => ({ ...prev, stok: event.target.value }))}
-                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-                    placeholder="10"
-                    required
-                  />
+                <label>
+                  <span className="text-sm font-medium">Stok</span>
+                  <input type="number" value={form.stok} onChange={(e) => setForm((s:any)=>({...s, stok: e.target.value}))} className="mt-2 w-full rounded-xl border px-4 py-3" />
                 </label>
               </div>
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">Deskripsi</span>
-                <textarea
-                  value={form.deskripsi}
-                  onChange={(event) => setForm((prev) => ({ ...prev, deskripsi: event.target.value }))}
-                  className="min-h-[120px] w-full rounded-3xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-                  placeholder="Deskripsi singkat produk"
-                />
+              <label>
+                <span className="text-sm font-medium">Deskripsi</span>
+                <textarea value={form.deskripsi} onChange={(e)=>setForm((s:any)=>({...s, deskripsi: e.target.value}))} className="mt-2 w-full rounded-xl border px-4 py-3" />
               </label>
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">URL Foto</span>
-                <input
-                  type="url"
-                  value={form.foto_url}
-                  onChange={(event) => setForm((prev) => ({ ...prev, foto_url: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-                  placeholder="https://..."
-                />
+              <label>
+                <span className="text-sm font-medium">Unggah Foto (opsional)</span>
+                <input type="file" accept="image/*" onChange={(e)=>setForm((s:any)=>({...s, foto_file: e.target.files && e.target.files[0] ? e.target.files[0] : null }))} className="mt-2 w-full" />
+                {form.foto_url ? <img src={form.foto_url} alt="preview" className="mt-3 h-24 w-24 object-cover rounded-md" /> : null}
               </label>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-full bg-rose-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {saving ? "Menyimpan..." : editingId ? "Simpan Perubahan" : "Tambah Produk"}
-                </button>
+
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={()=>setModalOpen(false)} className="rounded-full border px-5 py-3">Batal</button>
+                <button type="submit" disabled={saving} className="rounded-full bg-rose-600 px-5 py-3 text-white">{saving ? "Menyimpan..." : "Simpan"}</button>
               </div>
             </form>
           </div>
