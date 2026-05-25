@@ -12,7 +12,7 @@ export default function AdminProductsPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<any>({ nama: "", harga: "", stok: "", deskripsi: "", foto_file: null, foto_url: "" });
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<any>(null);
   const [editingKey, setEditingKey] = useState<string | null>("id");
   const [editingKeyValue, setEditingKeyValue] = useState<any>(null);
   const [saving, setSaving] = useState(false);
@@ -60,16 +60,21 @@ export default function AdminProductsPage() {
     // detect primary key name and value from product object
     const pkCandidates = ["id", "id_produk", "id_product", "product_id", "id_pesanan", "id_p"];
     let detectedKey: string | null = null;
-    for (const k of pkCandidates) {
-      if (product[k] !== undefined && product[k] !== null) {
-        detectedKey = k;
-        break;
+    // prefer common custom keys first
+    if (product && typeof product === "object") {
+      if ("id_produk" in product) detectedKey = "id_produk";
+      else if ("product_id" in product) detectedKey = "product_id";
+      else if ("id" in product) detectedKey = "id";
+      else {
+        for (const k of pkCandidates) {
+          if (product[k] !== undefined && product[k] !== null) { detectedKey = k; break; }
+        }
       }
     }
-    if (!detectedKey && product.id !== undefined) detectedKey = "id";
+    const detectedVal = detectedKey ? product[detectedKey] : (product.id ?? null);
     setEditingKey(detectedKey);
-    setEditingKeyValue(detectedKey ? product[detectedKey] : product.id ?? null);
-    setEditingId(product.id ?? null);
+    setEditingKeyValue(detectedVal);
+    setEditingId(detectedVal);
     setForm({
       nama: getProductName(product),
       harga: String(product.harga ?? ""),
@@ -107,13 +112,13 @@ export default function AdminProductsPage() {
         foto_url: imageUrl,
       };
 
-      if (editingId) {
+      if (editingKeyValue != null) {
         // use detected primary key if available
         const pk = editingKey || "id";
-        const pkVal = editingKeyValue ?? editingId;
+        const pkVal = editingKeyValue;
         const { error } = await supabase.from(PRODUCT_TABLE).update(payload).eq(pk, pkVal);
         if (error) throw error;
-        setProducts((prev) => prev.map((p) => ( (p[pk] === pkVal) ? { ...p, ...payload } : p)));
+        setProducts((prev) => prev.map((p) => ((p[pk] === pkVal) ? { ...p, ...payload } : p)));
         alert("Produk berhasil diperbarui.");
       } else {
         const { data, error } = await supabase.from(PRODUCT_TABLE).insert(payload).select().single();
@@ -138,13 +143,20 @@ export default function AdminProductsPage() {
     let pk: string | null = null;
     let pkVal: any = null;
 
+    // log product for debugging available identifier properties
+    if (product) console.log("handleDelete - product:", product);
+
     if (product) {
-      for (const k of pkCandidates) {
-        if (product[k] !== undefined && product[k] !== null) {
-          pk = k; pkVal = product[k]; break;
+      // prefer explicit custom columns
+      if ("id_produk" in product) { pk = "id_produk"; pkVal = product[pk]; }
+      else if ("product_id" in product) { pk = "product_id"; pkVal = product[pk]; }
+      else if ("id" in product) { pk = "id"; pkVal = product[pk]; }
+      else {
+        for (const k of pkCandidates) {
+          if (product[k] !== undefined && product[k] !== null) { pk = k; pkVal = product[k]; break; }
         }
+        if (!pk) { pk = "id"; pkVal = product.id ?? null; }
       }
-      if (!pk) { pk = "id"; pkVal = product.id ?? null; }
     } else {
       pk = "id"; pkVal = id;
     }
@@ -155,6 +167,7 @@ export default function AdminProductsPage() {
     setDeletingIds((s) => ({ ...s, [String(pkVal)]: true }));
     try {
       // use select() to confirm deletion
+      console.log(`handleDelete - deleting ${pk}=${pkVal}`);
       const { data, error } = await supabase.from(PRODUCT_TABLE).delete().eq(pk, pkVal).select();
       if (error) throw error;
       if (!data || data.length === 0) {
