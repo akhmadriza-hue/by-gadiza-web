@@ -49,9 +49,14 @@ export default function RootLayout({
         <footer className="border-t border-slate-200/80 bg-white/90 backdrop-blur-xl">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
             <p className="text-xs text-slate-500">© 2026 By Gadiza. All rights reserved.</p>
-            <Link href="/admin/orders" className="text-xs font-medium text-slate-400 transition hover:text-slate-700">
-              Admin Area
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link href="/admin/orders" className="text-xs font-medium text-slate-400 transition hover:text-slate-700">
+                Admin Area
+              </Link>
+              <Link href="/admin/products" className="text-xs font-medium text-slate-400 transition hover:text-slate-700">
+                Admin Produk
+              </Link>
+            </div>
           </div>
         </footer>
       </body>
