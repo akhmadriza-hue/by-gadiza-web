@@ -5,7 +5,6 @@ import Link from "next/link";
 import { getProvinces, getCities } from "./dataWilayah";
 
 const RAJAONGKIR_API_KEY = process.env.NEXT_PUBLIC_RAJAONGKIR_API_KEY || "";
-
 // Format numbers into Indonesian Rupiah currency strings
 function formatRupiah(value: number) {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value);
@@ -37,18 +36,20 @@ interface Courier {
   costs: {
     service: string;
     description: string;
-    cost: { value: number; etd: string }[];
+    cost: { value: number; etd: string; }[];
   }[];
 }
 
 export default function CheckoutPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loadingCart, setLoadingCart] = useState(true);
+  const [metodePengiriman, setMetodePengiriman] = useState<"kurir" | "manual">("kurir");
 
   // Form state
   const [namaPembeli, setNamaPembeli] = useState("");
   const [nomorWhatsApp, setNomorWhatsApp] = useState("");
   const [nomorTelepon, setNomorTelepon] = useState("");
+
   const [alamat, setAlamat] = useState("");
   const [kelurahan, setKelurahan] = useState("");
   const [kecamatan, setKecamatan] = useState("");
@@ -74,7 +75,8 @@ export default function CheckoutPage() {
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [successData, setSuccessData] = useState<{ kodeOrder: string } | null>(null);
 
-  const ASAL_KOTA_ID = "92"; // Kota Banjarbaru
+  // KONFIGURASI ASAL
+  const ASAL_KOTA_NAMA = "Kota Banjarbaru"; 
 
   // Load cart dari localStorage
   useEffect(() => {
@@ -101,6 +103,9 @@ export default function CheckoutPage() {
       setKotaTerpilih("");
       setKurir([]);
       setOngkir(0);
+      setKurirTerpilih("");
+      setServisTerpilih("");
+      setEstimasiHari("");
     }
   }, [provinsiTerpilih]);
 
@@ -130,8 +135,9 @@ export default function CheckoutPage() {
     }
   }
 
-  async function fetchOngkir(destinationCityId: string) {
-    console.log("🚀 fetchOngkir mulai, destination:", destinationCityId);
+  // FUNGSI ONGKIR
+  async function fetchOngkir(destinationCityId: string, destinationName: string = "") {
+    console.log(`🚀 fetchOngkir mulai. Tujuan ID: ${destinationCityId}, Nama Wilayah: "${destinationName}"`);
     try {
       setLoadingOngkir(true);
       setFormError("");
@@ -141,10 +147,10 @@ export default function CheckoutPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "cost",
-          origin: ASAL_KOTA_ID,
-          destination: destinationCityId,
+          destinationName: destinationName, 
+          originName: ASAL_KOTA_NAMA, 
           weight: 1000, 
-          courier: "jne:tiki:pos",
+          courier: "jne:tiki:pos", 
         }),
       });
 
@@ -171,11 +177,24 @@ export default function CheckoutPage() {
     }
   }
 
+  // LOGIKA PEMILIHAN KOTA (DISEDERHANAKAN AGAR BITESHIP AKURAT)
   async function handleKotaChange(cityId: string) {
     console.log("🔥 handleKotaChange dipanggil, cityId:", cityId);
     setKotaTerpilih(cityId);
-    if (cityId) {
-      await fetchOngkir(cityId);
+    
+    if (cityId) { 
+        const targetCity = kota.find((c) => c.city_id === cityId);
+        if (!targetCity) return;
+      
+        const fullCityName = targetCity.city_name.trim();
+        
+        // Hanya panggil API Biteship jika memilih opsi ekspedisi resmi
+        if (metodePengiriman === "kurir") {
+          await fetchOngkir(cityId, fullCityName);
+        }
+    } else { 
+        setKurir([]);
+        setOngkir(0);
     }
   }
 
@@ -203,14 +222,27 @@ export default function CheckoutPage() {
     if (!kecamatan.trim()) return "Kecamatan harus diisi";
     if (!provinsiTerpilih) return "Provinsi tujuan harus dipilih";
     if (!kotaTerpilih) return "Kota tujuan harus dipilih";
-    if (!kurirTerpilih) return "Kurir pengiriman harus dipilih";
-    if (ongkir === 0) return "Layanan pengiriman harus dipilih";
+    
+    // Validasi kurir hanya jika menggunakan opsi Ekspedisi Resmi
+    if (metodePengiriman === "kurir") {
+      if (!kurirTerpilih) return "Kurir pengiriman harus dipilih";
+      if (ongkir === 0) return "Layanan pengiriman harus dipilih";
+    }
+    
     return "";
   }
 
   function buildWhatsAppMessage(kodeOrder: string): string {
+    const teksKurir = metodePengiriman === "kurir" 
+      ? `Ongkir (${kurirTerpilih.toUpperCase()} - ${servisTerpilih}): ${formatRupiah(ongkir)}`
+      : `Ongkir: Gratis Ongkir (Diantar Langsung/COD)`;
+
+    const teksEstimasi = metodePengiriman === "kurir"
+      ? `Estimasi pengiriman: ${estimasiHari} hari kerja`
+      : `Estimasi: Segera diantar ke sekolah / waktu COD kesepakatan`;
+
     const lines = [
-      "====== NOTA PESANAN ======",
+      "====== NOTA PESAN ======",
       `Kode Order: *${kodeOrder}*`,
       "",
       "📋 *DATA PEMESAN*",
@@ -221,8 +253,10 @@ export default function CheckoutPage() {
       "📍 *ALAMAT PENGIRIMAN*",
       `${alamat}`,
       `Kel. ${kelurahan}, Kec. ${kecamatan}`,
-      `${kota.find((k) => k.city_id === kotaTerpilih)?.city_name || "Kota"}`,
-      `${provins.find((p) => p.province_id === provinsiTerpilih)?.province || "Provinsi"}`,
+      `${kota.find((k) => k.city_id === kotaTerpilih)?.city_name || "Kota"} ${provins.find((p) => p.province_id === provinsiTerpilih)?.province || "Provinsi"}`,
+      "",
+      "🚚 *METODE PENGANTARAN*",
+      metodePengiriman === "kurir" ? "Ekspedisi Resmi (Biteship)" : "Diantar Langsung / COD Teman Sekolah",
       "",
       "📦 *DAFTAR PRODUK*",
       ...cart.map((item) => {
@@ -232,13 +266,15 @@ export default function CheckoutPage() {
       "",
       "💳 *RINGKASAN PEMBAYARAN*",
       `Subtotal: ${formatRupiah(subtotal)}`,
-      `Ongkir (${kurirTerpilih.toUpperCase()} - ${servisTerpilih}): ${formatRupiah(ongkir)}`,
+      teksKurir,
       `*TOTAL: ${formatRupiah(totalHarga)}*`,
       "",
-      `Estimasi pengiriman: ${estimasiHari} hari kerja`,
+      teksEstimasi,
       "",
-      "Silakan lakukan pembayaran sesuai instruksi yang akan dikirimkan. Terima kasih!",
-      "========================",
+      metodePengiriman === "manual" 
+        ? "Silakan lakukan pembayaran secara Tunai (COD) saat barang diterima atau Transfer Bank."
+        : "Silakan lakukan pembayaran sesuai instruksi yang akan dikirimkan. Terima kasih.",
+      "=========================",
     ];
     return lines.filter((line) => line !== "").join("\n");
   }
@@ -269,13 +305,13 @@ export default function CheckoutPage() {
           nama_pembeli: namaPembeli,
           nomor_whatsapp: nomorWhatsApp,
           nomor_telepon: nomorTelepon,
-          alamat: `${alamat}, Kel. ${kelurahan}, Kec. ${kecamatan}, ${kota.find((k) => k.city_id === kotaTerpilih)?.city_name || ""}`,
+          alamat: `${alamat}, Kel. ${kelurahan}, Kec. ${kecamatan}, ${kota.find((k) => k.city_id === kotaTerpilih)?.city_name || "Kota"} ${provins.find((p) => p.province_id === provinsiTerpilih)?.province || "Provinsi"}`,
           provinsi: provins.find((p) => p.province_id === provinsiTerpilih)?.province || "",
           kota: kota.find((k) => k.city_id === kotaTerpilih)?.city_name || "",
           ongkir,
-          kurir: kurirTerpilih,
-          layanan: servisTerpilih,
-          estimasi_hari: estimasiHari,
+          kurir: metodePengiriman === "kurir" ? kurirTerpilih : "MANUAL",
+          layanan: metodePengiriman === "kurir" ? servisTerpilih : "DIANTAR LANGSUNG",
+          estimasi_hari: metodePengiriman === "kurir" ? estimasiHari : "0",
           total_harga: totalHarga,
           detail_produk: detailProduk,
         }),
@@ -309,6 +345,7 @@ export default function CheckoutPage() {
       setCart([]);
       setCheckoutSuccess(true);
       setSuccessData({ kodeOrder });
+
     } catch (error) {
       console.error("Checkout error:", error);
       setFormError(error instanceof Error ? error.message : "Terjadi kesalahan saat checkout");
@@ -346,7 +383,7 @@ export default function CheckoutPage() {
               <h3 className="font-semibold text-blue-900 mb-3">📝 Langkah Selanjutnya:</h3>
               <ul className="space-y-2 text-blue-800">
                 <li>✓ Nota pesanan telah dikirim ke WhatsApp Anda</li>
-                <li>✓ Silakan lakukan pembayaran sesuai instruksi</li>
+                <li>✓ Silakan lakukan pembayaran sesuai instruksi yang akan dikirimkan</li>
                 <li>✓ Pesanan akan diproses setelah pembayaran dikonfirmasi</li>
                 <li>✓ Anda akan menerima notifikasi pengiriman via WhatsApp</li>
               </ul>
@@ -437,7 +474,7 @@ export default function CheckoutPage() {
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">No. WhatsApp *</label>
                     <input
-                      type="tel"
+                      type="text"
                       value={nomorWhatsApp}
                       onChange={(e) => setNomorWhatsApp(e.target.value)}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-500"
@@ -448,7 +485,7 @@ export default function CheckoutPage() {
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">No. Telepon (Opsional)</label>
                     <input
-                      type="tel"
+                      type="text"
                       value={nomorTelepon}
                       onChange={(e) => setNomorTelepon(e.target.value)}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-purple-500"
@@ -456,13 +493,7 @@ export default function CheckoutPage() {
                     />
                   </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Alamat Pengiriman */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">📍 Alamat Pengiriman</h2>
-              <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Alamat Lengkap *</label>
                   <textarea
@@ -534,58 +565,125 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {/* Pilih Kurir & Layanan */}
-            {kotaTerpilih && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-xl font-bold text-gray-800 mb-4">🚚 Pilih Kurir & Layanan</h2>
+            {/* ================= PILIHAN METODE PENGIRIMAN ================= */}
+            <div className="bg-white p-6 rounded-lg shadow border mb-6">
+              <h3 className="font-bold text-lg mb-4 text-gray-800">Mekanisme Pengantaran</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 
-                {loadingOngkir ? (
-                  <div className="text-center py-8">
-                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
-                    <p className="mt-2 text-gray-600">Memuat pilihan kurir...</p>
+                {/* Opsi 1: Pakai Ekspedisi Resmi */}
+                <label className={`p-4 border rounded-lg cursor-pointer flex flex-col transition-all ${metodePengiriman === 'kurir' ? 'border-purple-600 bg-purple-50/40' : 'border-slate-200 hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-2 font-semibold text-slate-800">
+                    <input 
+                      type="radio" 
+                      name="metode_pengiriman" 
+                      checked={metodePengiriman === "kurir"}
+                      onChange={() => {
+                        setMetodePengiriman("kurir");
+                        setOngkir(0); 
+                        setKurirTerpilih("");
+                        setServisTerpilih("");
+                        setEstimasiHari("");
+                        if (kotaTerpilih) {
+                          const targetCity = kota.find((c) => c.city_id === kotaTerpilih);
+                          if (targetCity) fetchOngkir(kotaTerpilih, targetCity.city_name.trim());
+                        }
+                      }}
+                      className="text-purple-600 focus:ring-purple-500"
+                    />
+                    <span>Kirim via Ekspedisi Resmi</span>
                   </div>
-                ) : kurir.length > 0 ? (
-                  <div className="space-y-4">
-                    {kurir.map((courier, courierIdx) => (
-                      <div key={courier.code} className="border border-gray-300 rounded-lg p-4">
-                        <h3 className="font-bold text-gray-800 mb-3 uppercase">{courier.name}</h3>
-                        <div className="space-y-2 pl-4">
-                          {courier.costs.map((service, serviceIdx) => (
-                            <label
-                              key={`${courier.code}-${service.service}`}
-                              className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
-                            >
-                              <input
-                                type="radio"
-                                name="shipping"
-                                checked={kurirTerpilih === courier.code && servisTerpilih === service.service}
-                                onChange={() => handleKurirServiceChange(courierIdx, serviceIdx)}
-                                className="mr-3"
-                              />
-                              <div className="flex-1">
-                                <div className="font-semibold text-gray-800">{service.description}</div>
-                                <div className="text-sm text-gray-600">
-                                  ETD: {service.cost[0]?.etd || "Tidak tersedia"} hari kerja
-                                </div>
-                              </div>
-                              <div className="font-bold text-purple-600">{formatRupiah(service.cost[0]?.value || 0)}</div>
-                            </label>
-                          ))}
-                        </div>
+                  <span className="text-xs text-slate-500 mt-1 pl-5">Menggunakan kurir Biteship (JNE, J&T, POS) sesuai tarif asli.</span>
+                </label>
+
+                {/* Opsi 2: Antar Sendiri / COD Teman Sekolah */}
+                <label className={`p-4 border rounded-lg cursor-pointer flex flex-col transition-all ${metodePengiriman === 'manual' ? 'border-purple-600 bg-purple-50/40' : 'border-slate-200 hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-2 font-semibold text-slate-800">
+                    <input 
+                      type="radio" 
+                      name="metode_pengiriman" 
+                      checked={metodePengiriman === "manual"}
+                      onChange={() => {
+                        setMetodePengiriman("manual");
+                        setOngkir(0); 
+                        setKurir([]); 
+                        setKurirTerpilih("");
+                        setServisTerpilih("");
+                        setEstimasiHari("");
+                      }}
+                      className="text-purple-600 focus:ring-purple-500"
+                    />
+                    <span>Diantar Langsung / COD</span>
+                  </div>
+                  <span className="text-xs text-slate-500 mt-1 pl-5">Khusus teman sekolah gadiza atau area terdekat (Bebas Ongkir).</span>
+                </label>
+
+              </div>
+            </div>
+            {/* ============================================================= */}
+
+            {/* Pilih Kurir & Layanan Kondisional */}
+            {kotaTerpilih && (
+              <>
+                {metodePengiriman === "kurir" ? (
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <h2 className="text-xl font-bold text-gray-800 mb-4">🚚 Pilih Kurir & Layanan</h2>
+                    
+                    {loadingOngkir ? (
+                      <div className="text-center py-8">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+                        <p className="mt-2 text-gray-600">Memuat pilihan kurir...</p>
                       </div>
-                    ))}
+                    ) : kurir.length > 0 ? (
+                      <div className="space-y-4">
+                        {kurir.map((courier, courierIdx) => (
+                          <div key={courier.code} className="border border-gray-300 rounded-lg p-4">
+                            <h3 className="font-bold text-gray-800 mb-3 uppercase">{courier.name}</h3>
+                            <div className="space-y-2 pl-4">
+                              {courier.costs.map((service, serviceIdx) => (
+                                <label
+                                  key={`${courier.code}-${service.service}`}
+                                  className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
+                                >
+                                  <input
+                                    type="radio"
+                                    name="shipping"
+                                    checked={kurirTerpilih === courier.code && servisTerpilih === service.service}
+                                    onChange={() => handleKurirServiceChange(courierIdx, serviceIdx)}
+                                    className="mr-3"
+                                  />
+                                  <div className="flex-1">
+                                    <div className="font-semibold text-gray-800">{service.description}</div>
+                                    <div className="text-sm text-gray-600">
+                                      ETD: {service.cost[0]?.etd || "Tidak tersedia"} hari kerja
+                                    </div>
+                                  </div>
+                                  <div className="font-bold text-purple-600">{formatRupiah(service.cost[0]?.value || 0)}</div>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <p className="text-amber-800 font-medium">
+                          ⚠️ Opsi pengiriman otomatis tidak tersedia untuk rute ini.
+                        </p>
+                        <p className="text-sm text-amber-600 mt-1">
+                          Silakan hubungi admin via WhatsApp untuk pengiriman manual atau pastikan nama wilayah terdaftar.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="text-center py-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
-                    <p className="text-amber-800 font-medium">
-                      ⚠️ Opsi pengiriman otomatis tidak tersedia untuk rute ini.
-                    </p>
-                    <p className="text-sm text-amber-600 mt-1">
-                      Kemungkinan batasan akun RajaOngkir Starter. Silakan hubungi admin via WhatsApp untuk pengiriman manual.
+                  <div className="bg-amber-50 p-6 rounded-lg border border-amber-200 text-center shadow-sm">
+                    <p className="font-bold text-amber-800 text-lg mb-1">🛵 Mode Diantar Langsung Aktif!</p>
+                    <p className="text-sm text-amber-700 max-w-md mx-auto">
+                      Tanpa biaya kurir komersial. Pesanan akan dikoordinasikan langsung oleh gadiza untuk diantar ke sekolah atau COD. Pembayaran bisa via transfer bank atau cash langsung saat serah terima barang.
                     </p>
                   </div>
                 )}
-              </div>
+              </>
             )}
           </div>
 
@@ -602,9 +700,11 @@ export default function CheckoutPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Ongkir:</span>
-                    <span className="font-semibold text-gray-800">{formatRupiah(ongkir)}</span>
+                    <span className="font-semibold text-gray-800">
+                      {metodePengiriman === "manual" ? "Gratis" : formatRupiah(ongkir)}
+                    </span>
                   </div>
-                  {estimasiHari && (
+                  {metodePengiriman === "kurir" && estimasiHari && (
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-600">Estimasi:</span>
                       <span className="font-semibold text-gray-800">{estimasiHari} hari</span>
@@ -619,7 +719,7 @@ export default function CheckoutPage() {
 
                 <button
                   onClick={handleCheckout}
-                  disabled={isProcessing || ongkir === 0}
+                  disabled={isProcessing || (!kotaTerpilih) || (metodePengiriman === "kurir" && ongkir === 0)}
                   className="w-full bg-purple-600 text-white py-3 rounded-lg font-bold hover:bg-purple-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >
                   {isProcessing ? "Memproses..." : "Selesaikan Pesanan"}

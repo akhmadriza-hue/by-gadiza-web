@@ -1,148 +1,245 @@
 // Jalur: app/api/rajaongkir/route.ts
 import { NextResponse } from "next/server";
-import https from "https";
 
-const RAJAONGKIR_API_KEY = 
-  process.env.RAJAONGKIR_API_KEY || 
-  process.env.NEXT_PUBLIC_RAJAONGKIR_API_KEY || 
-  "";
+const BITESHIP_API_KEY = process.env.BITESHIP_API_KEY || "";
+
+// DATA SIMULASI (MOCK DATA) UNTUK BYPASS LIMITASI SANDBOX BITESHIP DI LUAR JABODETABEK
+const MOCK_COURIER_DATA = [
+  {
+    code: "jne",
+    name: "Jalur Nugraha Ekakurir (JNE)",
+    costs: [
+      {
+        service: "reg",
+        description: "JNE Reguler Service",
+        cost: [{ value: 36000, etd: "2-3 hari", note: "" }]
+      },
+      {
+        service: "oke",
+        description: "JNE Ongkos Kirim Ekonomis",
+        cost: [{ value: 29000, etd: "4-5 hari", note: "" }]
+      }
+    ]
+  },
+  {
+    code: "jnt",
+    name: "J&T Express",
+    costs: [
+      {
+        service: "ez",
+        description: "J&T Regular Service",
+        cost: [{ value: 34000, etd: "2-3 hari", note: "" }]
+      }
+    ]
+  },
+  {
+    code: "pos",
+    name: "POS Indonesia",
+    costs: [
+      {
+        service: "pos reguler",
+        description: "POS Kilat Khusus",
+        cost: [{ value: 31000, etd: "3-4 hari", note: "" }]
+      }
+    ]
+  }
+];
+
+// Helper function dengan Ekstraksi ID Kota (DI-PERTAHANKAN)
+async function getBiteShipAreaId(areaName: string): Promise<string | null> {
+  const searchArea = async (searchTerm: string) => {
+    try {
+      console.log(`    🔍 [BiteShip Search] Mencari: "${searchTerm}"`);
+      const response = await fetch(
+        `https://api.biteship.com/v1/maps/areas?countries=ID&type=administrative&input=${encodeURIComponent(searchTerm)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${BITESHIP_API_KEY.trim()}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        console.error(`    ❌ [BiteShip Search] API Error: ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json();
+      
+      if (data.areas && data.areas.length > 0) {
+        // --- STRATEGI 1: Filter Berdasarkan Dokumentasi Resmi ---
+        const cityLevelCandidates = data.areas.filter((a: any) => !a.administrative_division_level_3_name);
+
+        if (cityLevelCandidates.length > 0) {
+            const cleanTerm = searchTerm.replace(/^(Kota|Kabupaten)\s+/i, "").trim();
+            const match = cityLevelCandidates.find((a: any) => a.name.toLowerCase().includes(cleanTerm.toLowerCase()));
+            const selected = match || cityLevelCandidates[0];
+            
+            console.log(`    ✅ [Dokumentasi Resmi] Ditemukan Kota/Kab: ${selected.name} (ID: ${selected.id})`);
+            return selected.id;
+        }
+        
+        // --- STRATEGI 2: Fallback ID Extraction ---
+        console.log(`    ⚠️ [Fallback] API hanya mengembalikan data Kecamatan. Mengekstrak ID Kota...`);
+        const firstResult = data.areas[0];
+        const rawId = firstResult.id;
+
+        if (rawId.includes("IDND")) {
+            const extractedCityId = rawId.substring(0, rawId.indexOf("IDND"));
+            console.log(`    ✅ [Ekstraksi ID] Kota ID: ${extractedCityId} (Dari Kecamatan: ${firstResult.administrative_division_level_3_name})`);
+            return extractedCityId;
+        }
+        
+        console.log(`    ⚠️ Menggunakan ID mentah karena format tidak dikenali: ${rawId}`);
+        return rawId;
+      }
+      return null;
+    } catch (error) {
+      console.error(`    ⚠️ [BiteShip Search] Fetch Error untuk "${searchTerm}":`, error);
+      return null;
+    }
+  };
+
+  let areaId = await searchArea(areaName);
+  
+  if (!areaId) {
+    const cleanName = areaName.replace(/^(Kota|Kabupaten)\s+/i, "").trim();
+    if (cleanName !== areaName) {
+      console.log(`    🔄 [BiteShip Search] Gagal dengan nama asli, mencoba nama bersih: "${cleanName}"`);
+      areaId = await searchArea(cleanName);
+    }
+  }
+
+  return areaId;
+}
 
 export async function POST(request: Request) {
   try {
-    console.log("=== API ROUTE RAJAONGKIR DIPANGGIL ===");
-    
-    if (!RAJAONGKIR_API_KEY) {
-      return NextResponse.json({ error: "API Key RajaOngkir belum terkonfigurasi di file .env." }, { status: 500 });
-    }
+    console.log("=== API ROUTE MURNI BITESHIP (RATES) DIPANGGIL ===");
 
-    const body = await request.json();
-    const { action, origin, destination, weight, courier, provinceId } = body;
-
-    if (action === "cost") {
-      if (!origin || !destination || !weight || !courier) {
-        return NextResponse.json({ error: "Parameter tidak lengkap." }, { status: 400 });
-      }
-      return await handleCostRequest(
-        origin.toString(),
-        destination.toString(),
-        weight.toString(),
-        courier.toString()
+    if (!BITESHIP_API_KEY) {
+      return NextResponse.json(
+        { error: "API Key BiteShip belum terkonfigurasi di file .env." },
+        { status: 500 }
       );
     }
 
-    return NextResponse.json({ error: "Action tidak valid." }, { status: 400 });
+    const body = await request.json();
+    const { action, origin, originName, destinationName, weight, courier } = body;
 
-  } catch (error: any) {
-    console.error("Global API Route Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
+    if (action !== "cost" || !originName || !destinationName || !weight || !courier) {
+      return NextResponse.json({ error: "Parameter tidak lengkap." }, { status: 400 });
+    }
 
-// Fungsi tangguh menggunakan modul Native HTTPS Node.js untuk bypass bug Fetch di Windows
-function requestRajaOngkirNative(singleCourier: string, origin: string, destination: string, weight: string): Promise<any> {
-  return new Promise((resolve) => {
-    const postData = new URLSearchParams({
-      origin: origin,
-      destination: destination,
-      weight: weight,
-      courier: singleCourier
-    }).toString();
+    console.log(`\n📦 [BiteShip] Memulai Resolusi Area...`);
+    console.log(`📍 Asal: "${originName}"`);
+    console.log(`🏁 Tujuan: "${destinationName}"`);
 
-    const options = {
-      hostname: 'api.rajaongkir.com',
-      path: '/starter/cost',
-      method: 'POST',
-      headers: {
-        'key': RAJAONGKIR_API_KEY.trim(),
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(postData),
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Accept': 'application/json'
-      },
-      timeout: 6000 // Batasi timeout internal 6 detik agar tidak menggantung lama
+    const finalOriginAreaId = await getBiteShipAreaId(originName);
+    
+    if (!finalOriginAreaId) {
+      console.error(`❌ Gagal Resolusi: Area Asal.`);
+      return NextResponse.json(
+        { error: `Area asal "${originName}" tidak ditemukan.` },
+        { status: 404 }
+      );
+    }
+
+    const finalDestinationAreaId = await getBiteShipAreaId(destinationName);
+
+    if (!finalDestinationAreaId) {
+      console.error(`❌ Gagal Resolusi: Area Tujuan.`);
+      return NextResponse.json(
+        { error: `Area tujuan "${destinationName}" tidak ditemukan.` },
+        { status: 404 }
+      );
+    }
+
+    console.log(`🚀 [BiteShip] ID Asal: ${finalOriginAreaId} | ID Tujuan: ${finalDestinationAreaId}`);
+    console.log(`📡 [BiteShip] Menghitung Tarif...`);
+
+    const couriersArray = courier.split(":").map((c: string) => c.toLowerCase().trim()).filter(Boolean);
+
+    const ratesPayload = {
+      origin_area_id: finalOriginAreaId,
+      destination_area_id: finalDestinationAreaId,
+      couriers: couriersArray.join(","), 
+      items: [
+        {
+          name: "Paket Produk Gadiza",
+          description: "Pakaian / Aksesoris",
+          value: 100000, 
+          weight: parseInt(weight) || 1000, 
+          quantity: 1,
+          length: 10, 
+          width: 10, 
+          height: 10
+        }
+      ]
     };
 
-    console.log(`[Native HTTPS] Mengetuk server RajaOngkir untuk kurir: [${singleCourier}]...`);
-
-    const req = https.request(options, (res) => {
-      let dataChunks = '';
-
-      res.on('data', (chunk) => {
-        dataChunks += chunk;
-      });
-
-      res.on('end', () => {
-        try {
-          const parsedData = JSON.parse(dataChunks);
-          if (parsedData.rajaongkir?.status?.code === 200 && parsedData.rajaongkir?.results?.length > 0) {
-            console.log(`✅ [Native HTTPS] Kurir [${singleCourier}] BERHASIL.`);
-            resolve(parsedData.rajaongkir.results);
-          } else {
-            console.warn(`⚠️ [Native HTTPS] Kurir [${singleCourier}] ditolak/kosong:`, parsedData.rajaongkir?.status?.description);
-            resolve(null);
-          }
-        } catch (e) {
-          console.error(`❌ [Native HTTPS] Gagal parsing JSON kurir [${singleCourier}]`);
-          resolve(null);
-        }
-      });
+    const ratesResponse = await fetch("https://api.biteship.com/v1/rates/couriers", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${BITESHIP_API_KEY.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(ratesPayload)
     });
 
-    req.on('error', (err) => {
-      console.error(`❌ [Native HTTPS] Jaringan gagal total untuk kurir [${singleCourier}]:`, err.message);
-      resolve(null);
-    });
+    const ratesData = await ratesResponse.json();
 
-    req.on('timeout', () => {
-      console.error(`❌ [Native HTTPS] Waktu habis (Timeout) untuk kurir [${singleCourier}]`);
-      req.destroy();
-      resolve(null);
-    });
-
-    // Kirim data payload form-url-encoded
-    req.write(postData);
-    req.end();
-  });
-}
-
-async function handleCostRequest(origin: string, destination: string, weight: string, courier: string) {
-  try {
-    const courierList = courier.split(":").map(c => c.toLowerCase().trim()); 
-    const allResults: any[] = [];
-
-    // Fungsi pembantu untuk memberikan jeda waktu (delay) milidetik
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-    console.log(`[Sekuensial] Mulai memproses total ${courierList.length} kurir bergantian...`);
-
-    // Menggunakan perulangan FOR-OF biasa agar berjalan BERURUTAN (Satu per satu), bukan paralel
-    for (const singleCourier of courierList) {
-      if (!singleCourier) continue;
-
-      // Jalankan request native untuk satu kurir
-      const result = await requestRajaOngkirNative(singleCourier, origin, destination, weight);
+    // --- BAGIAN PENANGANAN ERROR / INTERSEPSI MOCK DATA ---
+    if (!ratesResponse.ok || !ratesData.success) {
+      console.error("❌ Kueri ke API Rates BiteShip Gagal:", ratesData);
       
-      if (result) {
-        allResults.push(...result);
+      // Jika dalam mode development lokal, aktifkan trik data tiruan
+      if (process.env.NODE_ENV === "development") {
+        console.log("💡 [Trik Mock] Mode Lokal Terdeteksi. Mengembalikan Tarif Simulasi agar Checkout Tidak Macet...");
+        return NextResponse.json({ 
+          status: { code: 200 }, 
+          results: MOCK_COURIER_DATA 
+        });
       }
 
-      // Berikan jeda istirahat 350ms sebelum mengetuk kurir berikutnya agar tidak dicurigai sebagai BOT/DDOS
-      console.log(`[Sekuensial] Memberikan jeda 350ms sebelum beralih dari [${singleCourier}]...`);
-      await sleep(350);
+      // Jika di production, kirim error asli ke user
+      return NextResponse.json({ error: ratesData.error || "Gagal mengambil tarif dari BiteShip." }, { status: ratesResponse.status });
     }
 
-    // Jika seluruh kurir gagal merespons karena IP masih diblokir sementara oleh RajaOngkir
-    if (allResults.length === 0) {
-      return NextResponse.json({ 
-        status: { code: 200 }, 
-        results: [], 
-        error: "Server RajaOngkir mendeteksi request terlalu cepat atau IP Anda dibatasi sementara. Silakan coba lagi beberapa saat atau gunakan pengiriman manual." 
-      });
-    }
+    // Jika API BiteShip Sukses Terpanggil (Misal nanti Akun Anda sudah di-approve)
+    const formattedResults = couriersArray.map((cr: string) => {
+      const courierPricings = ratesData.pricing.filter((p: any) => p.company === cr);
+      
+      return {
+        code: cr,
+        name: cr.toUpperCase(),
+        costs: courierPricings.map((p: any) => ({
+          service: p.type, 
+          description: p.name, 
+          cost: [
+            {
+              value: p.price, 
+              etd: p.duration, 
+              note: ""
+            }
+          ]
+        }))
+      };
+    });
 
-    return NextResponse.json({ status: { code: 200 }, results: allResults });
-  } catch (error) {
-    console.error("Error pada handleCostRequest sekuensial:", error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    console.log("✅ [BiteShip] Sukses mengambil tarif asli.");
+    return NextResponse.json({ status: { code: 200 }, results: formattedResults });
+
+  } catch (error: any) {
+    console.error("Global API Route Error (BiteShip):", error);
+    
+    // Fallback darurat di localhost jika seluruh blok try hancur/crash
+    if (process.env.NODE_ENV === "development") {
+      return NextResponse.json({ status: { code: 200 }, results: MOCK_COURIER_DATA });
+    }
+    
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
